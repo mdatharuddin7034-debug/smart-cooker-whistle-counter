@@ -1,0 +1,187 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+// --------------------------
+// Pin Definitions
+// --------------------------
+const int SOUND_PIN = 34;      // Analog sound sensor input (ADC1)
+const int BUZZER_PIN = 25;    // Buzzer output
+const int BTN_PLUS = 4;        // Increase target
+const int BTN_MINUS = 5;       // Decrease target
+const int BTN_START = 15;      // Optional start button (can also be used for reset)
+
+// --------------------------
+// OLED Setup
+// --------------------------
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// --------------------------
+// Variables
+// --------------------------
+int targetWhistles = 3;
+int currentCount = 0;
+
+unsigned long lastWhistleTime = 0;
+const unsigned long MIN_TIME_BETWEEN_WHISTLES = 700;  // prevents false double count
+const int WHISTLE_THRESHOLD = 1800;                   // adjust based on your mic sensor
+bool alerted = false;
+
+// --------------------------
+// Setup
+// --------------------------
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(BTN_PLUS, INPUT_PULLUP);
+  pinMode(BTN_MINUS, INPUT_PULLUP);
+  pinMode(BTN_START, INPUT_PULLUP);
+
+  digitalWrite(BUZZER_PIN, LOW);
+
+  // Initialize OLED
+  Wire.begin(21, 22); // SDA=21, SCL=22 for ESP32
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println("SSD1306 allocation failed!");
+    for (;;) {}
+  }
+
+  display.clearDisplay();
+  display.setTextColor(WHITE);
+  display.setTextSize(1);
+
+  showScreen();
+  Serial.println("System Ready");
+  Serial.println("Target whistles: 3");
+}
+
+// --------------------------
+// Main loop
+// --------------------------
+void loop() {
+  handleButtons();
+
+  if (digitalRead(BTN_START) == LOW) {
+    resetCount();
+    delay(200);
+  }
+
+  detectWhistle();
+
+  if (currentCount >= targetWhistles && !alerted) {
+    triggerAlert();
+  }
+
+  delay(20);
+}
+
+// --------------------------
+// Detect Whistle
+// --------------------------
+void detectWhistle() {
+  int sensorValue = analogRead(SOUND_PIN);
+
+  // Print for debug if needed
+  // Serial.println(sensorValue);
+
+  if (sensorValue > WHISTLE_THRESHOLD) {
+    unsigned long now = millis();
+
+    if (now - lastWhistleTime > MIN_TIME_BETWEEN_WHISTLES) {
+      currentCount++;
+      lastWhistleTime = now;
+
+      Serial.print("Whistle detected! Count = ");
+      Serial.println(currentCount);
+
+      showScreen();
+
+      if (currentCount >= targetWhistles) {
+        triggerAlert();
+      }
+    }
+  }
+}
+
+// --------------------------
+// Buttons
+// --------------------------
+void handleButtons() {
+  if (digitalRead(BTN_PLUS) == LOW) {
+    targetWhistles++;
+    if (targetWhistles > 20) targetWhistles = 20; // limit range
+    showScreen();
+    delay(200);
+  }
+
+  if (digitalRead(BTN_MINUS) == LOW) {
+    targetWhistles--;
+    if (targetWhistles < 1) targetWhistles = 1;
+    showScreen();
+    delay(200);
+  }
+}
+
+// --------------------------
+// Display
+// --------------------------
+void showScreen() {
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.setTextSize(2);
+  display.println("Whistles");
+
+  display.setTextSize(3);
+  display.setCursor(10, 25);
+  display.print(currentCount);
+  display.print("/");
+  display.print(targetWhistles);
+
+  display.display();
+}
+
+// --------------------------
+// Alert when target reached
+// --------------------------
+void triggerAlert() {
+  alerted = true;
+
+  Serial.println("TARGET REACHED!");
+
+  for (int i = 0; i < 4; i++) {
+    tone(BUZZER_PIN, 2000, 250);
+    delay(300);
+  }
+
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setCursor(10, 10);
+  display.println("Done!");
+  display.setTextSize(1);
+  display.setCursor(15, 40);
+  display.println("Target reached");
+  display.display();
+
+  delay(2000);
+
+  // reset after alert
+  currentCount = 0;
+  alerted = false;
+  showScreen();
+}
+
+// --------------------------
+// Reset count
+// --------------------------
+void resetCount() {
+  currentCount = 0;
+  alerted = false;
+  lastWhistleTime = 0;
+  showScreen();
+  Serial.println("Count reset");
+}
